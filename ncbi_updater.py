@@ -18,6 +18,8 @@ def download_from_url(url,fname,retries=2):
     if retries<0:return False
     try:
         return urllib.request.urlretrieve(url,fname,reporthook=report_hook)
+    except KeyboardInterrupt:
+        exit("[!] Recieved KeyboardInterrupt")
     except:
         print(f"[!] Retrying the download. {retries} retries left")
         return download_from_url(url,fname,retries-1)
@@ -82,14 +84,15 @@ def get_local_dbs():
     cwd = os.getcwd()
     for folder_name in os.listdir(cwd):
         folder_path = os.path.join(cwd, folder_name)
-        if os.path.isdir(folder_path):
+        db_path = os.path.join(folder_path,"taxonomy4blast.sqlite3")
+        if os.path.isdir(folder_path) and os.path.isfile(db_path):
             local_dbs.append(folder_name)
     return local_dbs
 
 def list_local_dbs():
     # Prints the local dbs in a nice way
     local_dbs = get_local_dbs()
-    print("\n[.] Listing local dbs")
+    print("\33[2K\n[.] Listing local dbs")
     for local_db in local_dbs:
         print(f"[.] Found db with name '{local_db}'")
 
@@ -130,10 +133,10 @@ def fetch_remote_dbs(remote_dbs):
 
 def list_remote_dbs(remote_dbs):
     # Prints the cached remote dbs in a nice way
+    if len(remote_dbs)==0:fetch_remote_dbs(remote_dbs)
     modification_time = os.path.getmtime(REMOTE_DB_CACHE_FNAME)
-    if len(remote_dbs)==0:fetch_remote_dbs()
     local_dbs = get_local_dbs()    
-    print(f"\n[.] Listing remote dbs. Latest fetch '{time.ctime(modification_time)}'")
+    print(f"\33[2K\n[.] Listing remote dbs. Latest fetch '{time.ctime(modification_time)}'")
     for db in remote_dbs.values():
         size = db['size']//(1024**3)
         if size==0:size = "<1"
@@ -159,7 +162,7 @@ def select_db_to_update(remote_dbs):
         return False
     
     db = remote_dbs[db_name]
-    print(f"\n[.] You are about to update '{db['name']}' with {len(db['files'])} files")
+    print(f"\33[2K\n[.] You are about to update '{db['name']}' with {len(db['files'])} files")
     print(f"[.] It will require {db['size']//(1024**3)} GB of diskspace")
     
     if input("[?] Do you want to proceed? [y/N]: ").lower() not in ("y","yes"):

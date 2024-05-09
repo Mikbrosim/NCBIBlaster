@@ -7,6 +7,7 @@ import io
 try:
     #from Bio import SeqIO
     from Bio.Blast import NCBIWWW,NCBIXML
+    from Bio.Blast.Applications import NcbiblastnCommandline
     from Bio.Blast.Record import Blast,Alignment,HSP
     from Bio.Seq import Seq
 except ImportError:
@@ -21,13 +22,13 @@ ALLOWED_BASES = set("ATCGU")
 
 
 def main():
-    data_file = open("test.txt")
+    data_file = open("samlet.fasta")
     dnas:list[Seq] = []
     for i,dna in enumerate(get_sequence(file=data_file)):
         print(i,dna[:10])
         dnas.append(dna)
 
-    for seq,records in blast_batch(dnas,db="nr"):
+    for seq,records in blast_batch(dnas,db="mito",workers=10,remote=False,cache_only=False):
         record = next(records)
         print(f"== {seq[:10]} ==")
         for acc, qc, match, bp, title in record_formatter(record,8,1):
@@ -86,17 +87,17 @@ def record_formatter(record:Blast,number_of_alignments:int=2,max_high_scoring_pa
             yield acc, qc, match, bp, title
 
 
-def blast_batch(query_sequences:list[Seq], db="nr", cache_only=True, workers:int=1):
+def blast_batch(query_sequences:list[Seq], db="nr", cache_only=True, workers:int=1, remote=True):
     remove_empty_cache()
     print("[.] Running blast!")
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = {executor.submit(lambda query_sequence: blast(query_sequence,db,cache_only),query_sequence): query_sequence for query_sequence in query_sequences}
+        futures = {executor.submit(lambda query_sequence: blast(query_sequence,db,cache_only,remote),query_sequence): query_sequence for query_sequence in query_sequences}
         for future in concurrent.futures.as_completed(futures):
             yield future.result()
     print("[.] Blast done!")
 
 
-def blast(query_sequence:Seq|str,db="nr",cache_only=False):
+def blast(query_sequence:Seq|str,db="nr",cache_only=False, remote=True):
     # Arg check
     if not isinstance(query_sequence,(Seq,str)):
         raise TypeError(f"Got query_sequence of type {type(query_sequence)}, expected Seq or str")
@@ -115,18 +116,24 @@ def blast(query_sequence:Seq|str,db="nr",cache_only=False):
             print(f"[!] Only cache is allowed, but sequence {query_sequence[:10]} {md5_checksum}, is not in cache")
             open(file_name, "w").close()
         else:
-            # Run blast and save result to cache
             print(f"[.] {query_sequence[:10]} {md5_checksum} Locking cache_file")
-            with open(file_name, "w") as file:
-                print(f"[.] {query_sequence[:10]} Running blast with {len(query_sequence)} BP")
-                t = time.time()
-                result_handle:io.StringIO = NCBIWWW.qblast(program="blastn",database=db,sequence=query_sequence,megablast=True)
-                if not isinstance(result_handle,io.StringIO):
-                    raise TypeError(f"result_handle returned type {type(result_handle)} expected io.StringIO")
-                result =  result_handle.getvalue()
-                print(f"[.] {query_sequence[:10]} Blast took {int(time.time()-t)} seconds")
-                print(f"[.] {query_sequence[:10]} Saving to cache")
-                file.write(result)
+            t = time.time()
+            if remote:
+                # Run blast and save result to cache
+                with open(file_name, "w") as file:
+                    print(f"[.] {query_sequence[:10]} Running blast with {len(query_sequence)} BP")
+                    result_handle:io.StringIO = NCBIWWW.qblast(program="blastn",database=db,sequence=query_sequence,megablast=True)
+                    if not isinstance(result_handle,io.StringIO):
+                        raise TypeError(f"result_handle returned type {type(result_handle)} expected io.StringIO")
+                    result =  result_handle.getvalue()
+                    print(f"[.] {query_sequence[:10]} Saving to cache")
+                    file.write(result)
+            else:
+                # Run blast locally
+                with open(f"{md5_checksum}.seq","w") as f:f.write(query_sequence)
+                NcbiblastnCommandline(cmd='blastn',db=db+"/"+db,outfmt=5,out=file_name,query=f"{md5_checksum}.seq",task='megablast')()
+                os.remove(f"{md5_checksum}.seq")
+            print(f"[.] {query_sequence[:10]} Blast took {int(time.time()-t)} seconds")
 
     if len(open(file_name).read(1))==0:
         print(f"[!] Cache file at '{file_name}' is empty")
